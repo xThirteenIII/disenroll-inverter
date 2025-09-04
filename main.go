@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	tunnel "disenroll-inverter/src"
 	"fmt"
 	"log"
 	"os"
@@ -41,6 +42,20 @@ func main(){
 	}
 	fmt.Printf("Done\n")
 
-	// --- Start SSH Tunnel --- //
-}
+	// Start SSH Tunnel
+	// Setup tunnel, do not start it yet
+	sshTunnel := tunnel.NewSSHTunnel(
+		sshUser, // user@host, default port is 22 if not specified
+		tunnel.PrivateKeyFile(homeDir+sshPrivateKey), // Auth via private key
+		sshDestination,
+	)
 
+	// Start SSH Tunnel in its goroutine, use context for handling shutdown.
+	fmt.Printf("Starting SSH Tunnel...")
+	go func() {
+		if err := sshTunnel.Start(ctx); err != nil {
+			log.Fatalf("\nFailed to start SSH tunnel. Here's why: %v", err)
+		}
+	}()
+	fmt.Printf("Done\n")
+}

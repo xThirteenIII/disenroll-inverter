@@ -189,7 +189,7 @@ func (tunnel *SSHTunnel) forward(localConn net.Conn) {
 
 }
 
-func Private_key_file(path string) ssh.AuthMethod {
+func PrivateKeyFile(path string) ssh.AuthMethod {
 
     buffer, err := os.ReadFile(path)
     if err != nil {
