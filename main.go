@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	tunnel "disenroll-inverter/src"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
 	"time"
 
 	// Third party packages
@@ -38,9 +40,7 @@ func main(){
 	fmt.Printf("  * delete record if it is\n")
 	fmt.Printf("  * check if inverter exists\n")
 	fmt.Printf("  * delete record if it does\n")
-	fmt.Printf("  * double check both records have been deleted from db\n")
-	fmt.Printf("  * check if inverter exists on AWS DynamoDB cache\n")
-	fmt.Printf("  * delete record if it does\n\n\n")
+	fmt.Printf("  * delete record from AWS DynamoDB cache\n\n\n")
 
 	fmt.Printf("Getting $HOME directory...")
 	homeDir, err := os.UserHomeDir()
@@ -95,6 +95,75 @@ func main(){
 
 	// Start a watchdog that pings DB every 30 second, making sure connection keeps alive.
 	go dbops.StartWatchdog(ctx, db, 30*time.Second)
+
+	// Init inverter struct before user input loop.
+	inverter := &dbops.Inverter{}
+	heidiTable := os.Getenv("HEIDITABLE1")
+
+	for {
+		fmt.Printf("\nType Inverter MAC Address: ")
+		scanner := bufio.NewScanner(os.Stdin)
+		if !scanner.Scan() {
+			log.Fatalf("\nfailed to read selection")
+			return
+		}
+
+		inverter.MAC = scanner.Text()
+
+		// TODO: make a list of available tables
+		fmt.Printf("\nChecking if %s exists in heidiSQL table...", inverter.MAC)
+		inverterExists := inverter.CheckIfExists(db, heidiTable)
+		if inverterExists {
+			fmt.Printf("Done [1/6]")
+			fmt.Printf("\nInverter is enrolled.")
+			break
+		}else {
+			fmt.Printf("\nInverter is not enrolled.")
+		}
+	}
+
+	fmt.Printf("\nDeleting %s from table...", inverter.MAC)
+	err = inverter.DeleteMacFromTable(db, "enrollment")
+	if err != nil {
+		fmt.Printf("\nDelete operation error: %v", err)
+	}	
+	fmt.Printf("Done [2/6]")
+
+	heidiTable = os.Getenv("HEIDITABLE2")
+	fmt.Printf("\nChecking if %s exists in heidiSQL table...", inverter.MAC)
+	inverterExists := inverter.CheckIfExists(db, heidiTable)
+	if inverterExists {
+		fmt.Printf("\nInverter exists.")
+		fmt.Printf("Done [3/6]")
+	}else {
+		fmt.Printf("\nInverter does not exist in table.")
+		ctx.Done()
+	}
+
+	fmt.Printf("\nDeleting %s from table...", inverter.MAC)
+	err = inverter.DeleteMacFromTable(db, "appliance")
+	if err != nil {
+		fmt.Printf("\nDelete operation error: %v", err)
+	}	
+	fmt.Printf("Done [4/6]")
+
+	dynamoClient := dbops.InitDynamoClient()
+
+	dynamoCache := os.Getenv("AWSDYNAMOTABLE1")
+	fmt.Printf("\nDeleting %s from cache...", inverter.MAC)
+	err = inverter.DeleteMacFromDynamoDBTable(ctx, dynamoClient, dynamoCache)
+	if err != nil {
+		fmt.Printf("\nDelete operation error: %v", err)
+	}	
+	fmt.Printf("Done [5/6]")
+
+	dynamoCache = os.Getenv("AWSDYNAMOTABLE2")
+	fmt.Printf("\nDeleting %s from cache...", inverter.MAC)
+	err = inverter.DeleteMacFromDynamoDBTable(ctx, dynamoClient, dynamoCache)
+	if err != nil {
+		fmt.Printf("\nDelete operation error: %v", err)
+	}	
+	fmt.Printf("Done [6/6]")
 
 	// Block main until signal of shutdown.
 	sigCh := make(chan os.Signal, 1)
