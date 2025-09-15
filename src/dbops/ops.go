@@ -1,8 +1,16 @@
 package dbops
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
 /*
@@ -17,15 +25,11 @@ import (
 */
 
 // CheckIfInverterEnrolled checks if the inverter record exists in the enrollment table.
-func (i *Inverter) CheckIfEnrolled(db *sql.DB) bool{
+func (i *Inverter) CheckIfExists(db *sql.DB, sqlTable string) bool{
 
 	// Init sql query
-	sqlQuery := `
-		SELECT COUNT(*)
-		FROM enrollment
-		WHERE macAddress = ?
-	`
-
+	sqlQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE macAddress = ?", sqlTable)
+	
 	// Rows is the result of a query. Its cursor starts before the first row
 	// of the result set. Use [Rows.Next] to advance from row to row.
 	// Struct built in the database/sql package.
@@ -34,21 +38,18 @@ func (i *Inverter) CheckIfEnrolled(db *sql.DB) bool{
 	// QueryRow returns a result set that is scannable.
 	err := db.QueryRow(sqlQuery, i.MAC).Scan(&count)
 	if err != nil {
-		fmt.Printf("Query error.")
+		fmt.Printf("Query error.\n %v", err)
 		return false
 	}
 
 	return count > 0
 }
 
-// DeleteFromEnrollmentTable delets current inverter mac address record from the enrollment table.
+// DeleteFromEnrollmentTable delets current inverter mac address record from given sql table.
 // TODO: maybe have some general functions to use.
-func (i *Inverter) DeleteFromEnrollmentTable(db *sql.DB) error {
+func (i *Inverter) DeleteMacFromTable(db *sql.DB, sqlTable string) error {
 
-	sqlQuery := `
-		DELETE FROM enrollment
-		WHERE macAddress = ?
-	`
+	sqlQuery := fmt.Sprintf("DELETE FROM %s WHERE macAddress = ?", sqlTable)
 
 	// db.Exec() executes the query without returning a result set.
 	// It returns a Result and an error.
@@ -86,4 +87,38 @@ func (i *Inverter) DeleteFromEnrollmentTable(db *sql.DB) error {
 	}
 
 	return nil
+}
+
+// DeleteFromDynamoDBTable deletes the inverter MAC Address from the given table on AWS DynamoDB.
+func (i *Inverter) DeleteMacFromDynamoDBTable(ctx context.Context, client *dynamodb.Client, tableName string) error{
+
+	// Create the input key to be deleted.
+	input := &dynamodb.DeleteItemInput{
+		TableName:aws.String(tableName),
+		Key: map[string]types.AttributeValue{
+			// An attribute of type String. For example:
+			//
+			//	"S": "Hello"
+			"macAddress": &types.AttributeValueMemberS{Value: i.MAC},
+		},
+	}
+
+	// Execute delete operation.
+	_, err := client.DeleteItem(ctx, input)
+	if err != nil {
+		return fmt.Errorf("failed to delete item from AWS DynamoDB table %s. Here's why: %v", tableName, err)
+	}
+
+	return nil
+}
+
+func InitDynamoClient() *dynamodb.Client {
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		fmt.Printf("\ncould not download aws configs. Here's why: %v", err)
+		time.Sleep(3*time.Second)
+		os.Exit(1)
+	}
+
+	return dynamodb.NewFromConfig(cfg)
 }
